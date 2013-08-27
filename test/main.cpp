@@ -4,7 +4,7 @@ Enumerates very, very large directories quickly by directly using kernel syscall
 File created: Aug 2013
 */
 
-#define NUMBER_OF_FILES 100000
+#define NUMBER_OF_FILES 1000000
 
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -14,6 +14,7 @@ File created: Aug 2013
 #include <iostream>
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #ifdef WIN32
 #include <io.h>
 #include <direct.h>
@@ -45,6 +46,34 @@ File created: Aug 2013
 #define _L(f) f
 #define POSIX_SPRINTF sprintf
 #endif
+
+std::ostream &operator<<(std::ostream &s, const FastDirectoryEnumerator::timespec &ts)
+{
+	char buf[32];
+    struct tm t;
+    size_t len=sizeof(buf);
+    int ret;
+
+    tzset();
+    if (localtime_r(&(ts.tv_sec), &t) == NULL)
+    {
+    	s << "<bad timespec>";
+        return s;
+    }
+
+    ret = strftime(buf, len, "%F %T", &t);
+    if (ret == 0)
+    {
+    	s << "<bad timespec>";
+        return s;
+    }
+    len -= ret - 1;
+
+    snprintf(&buf[strlen(buf)], len, ".%09ld", ts.tv_nsec);
+    s << buf;
+
+    return s;
+}
 
 int main(void)
 {
@@ -82,8 +111,11 @@ int main(void)
 			enumeration->insert(enumeration->end(), std::make_move_iterator(chunk->begin()), std::make_move_iterator(chunk->end()));
 	end_enumerate_directory(h);
     auto end=chrono::high_resolution_clock::now();
+	if(!enumeration)
+		std::cerr << "ERROR: enumeration failed!" << std::endl;
     auto diff=chrono::duration_cast<secs_type>(end-begin);
     std::cout << "It took " << diff.count() << " secs to enumerate " << NUMBER_OF_FILES << " entries which is " << NUMBER_OF_FILES/diff.count() << " entries per second." << std::endl;
+    std::cout << "Filename enumeration returns information 0x" << std::hex << (*enumeration)[0].metadata_ready().value << std::dec << std::endl;
 	enumeration.release();
 
 	// Enumerate
@@ -97,28 +129,78 @@ int main(void)
 			enumeration->insert(enumeration->end(), std::make_move_iterator(chunk->begin()), std::make_move_iterator(chunk->end()));
 	end_enumerate_directory(h);
     end=chrono::high_resolution_clock::now();
+	if(!enumeration)
+		std::cerr << "ERROR: enumeration failed!" << std::endl;
     diff=chrono::duration_cast<secs_type>(end-begin);
     std::cout << "It took " << diff.count() << " secs to enumerate " << NUMBER_OF_FILES << " entries which is " << NUMBER_OF_FILES/diff.count() << " entries per second." << std::endl;
+    std::cout << "Enumeration returns information 0x" << std::hex << (*enumeration)[0].metadata_ready().value << std::dec << std::endl;
+
+	// Enumerate
+	std::cout << "Pulling all metadata for " << NUMBER_OF_FILES << " files. This may take a while ..." << std::endl;
+    begin=chrono::high_resolution_clock::now();
+	h=begin_enumerate_directory(_L("testdir"));
+	if(enumeration)
+	{
+		have_metadata_flags maximum; maximum.value=(unsigned)-1;
+		for(auto &entry : *enumeration)
+		{
+			entry.fetch_metadata(_L("testdir"), maximum);
+		}
+	}
+    end=chrono::high_resolution_clock::now();
+    diff=chrono::duration_cast<secs_type>(end-begin);
+    std::cout << "It took " << diff.count() << " secs to get maximum metadata for " << NUMBER_OF_FILES << " entries which is " << NUMBER_OF_FILES/diff.count() << " entries per second." << std::endl;
+    std::cout << "Enumeration returns information 0x" << std::hex << (*enumeration)[0].metadata_ready().value << std::dec << std::endl;
+    std::cout << "System max information ought to be 0x" << std::hex << directory_entry::metadata_supported().value << std::dec << std::endl;
+
+    if(enumeration)
+    {
+    	auto &entry=enumeration->front();
+    	std::cout << "First entry is called " << entry.name() << " and it has the following information:" << std::endl;
+#define PRINT_FIELD(field) \
+    	std::cout << "  st_" #field ": "; if(entry.metadata_ready().have_##field) std::cout << entry.st_##field(); else std::cout << "unknown"; std::cout << std::endl
+    	PRINT_FIELD(dev);
+    	PRINT_FIELD(ino);
+    	PRINT_FIELD(type);
+    	PRINT_FIELD(mode);
+    	PRINT_FIELD(nlink);
+    	PRINT_FIELD(uid);
+    	PRINT_FIELD(gid);
+    	PRINT_FIELD(rdev);
+    	PRINT_FIELD(atim);
+    	PRINT_FIELD(mtim);
+    	PRINT_FIELD(ctim);
+    	PRINT_FIELD(size);
+    	PRINT_FIELD(allocated);
+    	PRINT_FIELD(blocks);
+    	PRINT_FIELD(blksize);
+    	PRINT_FIELD(flags);
+    	PRINT_FIELD(gen);
+    	PRINT_FIELD(birthtim);
+    }
 
 	// Check results
 	std::cout << "Checking enumeration and deleting " << NUMBER_OF_FILES << " files. This may also take a while ..." << std::endl;
-	if(enumeration->size()!=NUMBER_OF_FILES)
-		std::cerr << "ERROR: enumeration returned " << enumeration->size() << " items when it should have returned " << NUMBER_OF_FILES << " items." << std::endl;
-	for(auto &entry : *enumeration)
+	if(enumeration)
 	{
-		auto it=tocheck.find(entry.name().native());
-		if(it==tocheck.end())
-			std::cerr << "ERROR: '" << entry.name() << "' shouldn't be there!" << std::endl;
-		else if(it->second)
-			std::cerr << "ERROR: '" << entry.name() << "' found more than once!" << std::endl;
-		else
-			it->second=true;
-		name.replace(8, std::string::npos, entry.name().native());
-		POSIX_UNLINK(name.c_str());
+		if(enumeration->size()!=NUMBER_OF_FILES)
+			std::cerr << "ERROR: enumeration returned " << enumeration->size() << " items when it should have returned " << NUMBER_OF_FILES << " items." << std::endl;
+		for(auto &entry : *enumeration)
+		{
+			auto it=tocheck.find(entry.name().native());
+			if(it==tocheck.end())
+				std::cerr << "ERROR: '" << entry.name() << "' shouldn't be there!" << std::endl;
+			else if(it->second)
+				std::cerr << "ERROR: '" << entry.name() << "' found more than once!" << std::endl;
+			else
+				it->second=true;
+			name.replace(8, std::string::npos, entry.name().native());
+			POSIX_UNLINK(name.c_str());
+		}
+		for(auto &item : tocheck)
+			if(!item.second)
+				std::cerr << "ERROR: '" << std::filesystem::path(item.first) << "' was not enumerated!" << std::endl;
 	}
-	for(auto &item : tocheck)
-		if(!item.second)
-			std::cerr << "ERROR: '" << std::filesystem::path(item.first) << "' was not enumerated!" << std::endl;
 
 	// Delete directory
 	POSIX_RMDIR(_L("testdir"));
