@@ -80,9 +80,9 @@ void end_enumerate_directory(void *h)
 #endif
 }
 
-std::shared_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_t maxitems, std::filesystem::path glob)
+std::unique_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_t maxitems, std::filesystem::path glob, bool namesonly)
 {
-	std::shared_ptr<std::vector<directory_entry>> ret;
+	std::unique_ptr<std::vector<directory_entry>> ret;
 #ifdef WIN32
 	// From http://undocumented.ntinternals.net/UserMode/Undocumented%20Functions/NT%20Objects/File/FILE_INFORMATION_CLASS.html
 	typedef enum _FILE_INFORMATION_CLASS {
@@ -161,6 +161,14 @@ std::shared_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_
 	  WCHAR         FileName[1];
 	} FILE_ID_FULL_DIR_INFORMATION, *PFILE_ID_FULL_DIR_INFORMATION;
 
+	// From http://msdn.microsoft.com/en-us/library/windows/hardware/ff540329(v=vs.85).aspx
+	typedef struct _FILE_NAMES_INFORMATION {
+	  ULONG NextEntryOffset;
+	  ULONG FileIndex;
+	  ULONG FileNameLength;
+	  WCHAR FileName[1];
+	} FILE_NAMES_INFORMATION, *PFILE_NAMES_INFORMATION;
+
 #ifndef NTSTATUS
 #define NTSTATUS LONG
 #endif
@@ -202,10 +210,6 @@ std::shared_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_
 		if(!(NtQueryDirectoryFile=(NtQueryDirectoryFile_t) GetProcAddress(GetModuleHandleA("NTDLL.DLL"), "NtQueryDirectoryFile")))
 			abort();
 
-	FILE_ID_FULL_DIR_INFORMATION *buffer=(FILE_ID_FULL_DIR_INFORMATION *) malloc(sizeof(FILE_ID_FULL_DIR_INFORMATION)*maxitems);
-	if(!buffer) throw std::bad_alloc();
-	auto unbuffer=detail::Undoer([&buffer] { free(buffer); });
-
 	IO_STATUS_BLOCK isb={ 0 };
 	UNICODE_STRING _glob;
 	if(!glob.empty())
@@ -213,42 +217,77 @@ std::shared_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_
 		_glob.Buffer=const_cast<std::filesystem::path::value_type *>(glob.c_str());
 		_glob.Length=_glob.MaximumLength=(USHORT) glob.native().size();
 	}
-	if(0/*STATUS_SUCCESS*/!=NtQueryDirectoryFile(h, NULL, NULL, NULL, &isb, buffer, (ULONG)(sizeof(FILE_ID_FULL_DIR_INFORMATION)*maxitems),
-		FileIdFullDirectoryInformation, FALSE, glob.empty() ? NULL : &_glob, FALSE))
+
+	if(namesonly)
 	{
-		return ret;
+		FILE_NAMES_INFORMATION *buffer=(FILE_NAMES_INFORMATION *) malloc(sizeof(FILE_NAMES_INFORMATION)*maxitems);
+		if(!buffer) throw std::bad_alloc();
+		auto unbuffer=detail::Undoer([&buffer] { free(buffer); });
+
+		if(0/*STATUS_SUCCESS*/!=NtQueryDirectoryFile(h, NULL, NULL, NULL, &isb, buffer, (ULONG)(sizeof(FILE_NAMES_INFORMATION)*maxitems),
+			FileNamesInformation, FALSE, glob.empty() ? NULL : &_glob, FALSE))
+		{
+			return ret;
+		}
+		ret=std::unique_ptr<std::vector<directory_entry>>(new std::vector<directory_entry>);
+		std::vector<directory_entry> &_ret=*ret;
+		_ret.reserve(maxitems);
+		directory_entry item;
+		bool done=false;
+		for(FILE_NAMES_INFORMATION *ffdi=buffer; !done; ffdi=(FILE_NAMES_INFORMATION *)((size_t) ffdi + ffdi->NextEntryOffset))
+		{
+			size_t length=ffdi->FileNameLength/sizeof(std::filesystem::path::value_type);
+			if(length<=2 && '.'==ffdi->FileName[0])
+				if(1==length || '.'==ffdi->FileName[1]) continue;
+			std::filesystem::path::string_type leafname(ffdi->FileName, length);
+			item.leafname=std::move(leafname);
+			_ret.push_back(std::move(item));
+			if(!ffdi->NextEntryOffset) done=true;
+		}
 	}
-	ret=std::make_shared<std::vector<directory_entry>>();
-	std::vector<directory_entry> &_ret=*ret;
-	_ret.reserve(maxitems);
-	directory_entry item;
-	// This is what windows returns with each enumeration
-	item.have_metadata.have_ino=1;
-	item.have_metadata.have_rdev=1;
-	item.have_metadata.have_atimespec=1;
-	item.have_metadata.have_mtimespec=1;
-	item.have_metadata.have_ctimespec=1;
-	item.have_metadata.have_size=1;
-	item.have_metadata.have_allocated=1;
-	item.have_metadata.have_birthtimespec=1;
-	bool done=false;
-	for(FILE_ID_FULL_DIR_INFORMATION *ffdi=buffer; !done; ffdi=(FILE_ID_FULL_DIR_INFORMATION *)((size_t) ffdi + ffdi->NextEntryOffset))
+	else
 	{
-		size_t length=ffdi->FileNameLength/sizeof(std::filesystem::path::value_type);
-		if(length<=2 && '.'==ffdi->FileName[0])
-			if(1==length || '.'==ffdi->FileName[1]) continue;
-		std::filesystem::path::string_type leafname(ffdi->FileName, length);
-		item.leafname=std::move(leafname);
-		item.stat.st_ino=ffdi->FileId.QuadPart;
-		item.stat.st_rdev=(ffdi->FileAttributes&FILE_ATTRIBUTE_DIRECTORY) ? S_IFDIR : S_IFREG;
-		item.stat.st_atimespec=to_timespec(ffdi->LastAccessTime);
-		item.stat.st_mtimespec=to_timespec(ffdi->LastWriteTime);
-		item.stat.st_ctimespec=to_timespec(ffdi->ChangeTime);
-		item.stat.st_size=ffdi->EndOfFile.QuadPart;
-		item.stat.st_allocated=ffdi->AllocationSize.QuadPart;
-		item.stat.st_birthtimespec=to_timespec(ffdi->CreationTime);
-		_ret.push_back(std::move(item));
-		if(!ffdi->NextEntryOffset) done=true;
+		FILE_ID_FULL_DIR_INFORMATION *buffer=(FILE_ID_FULL_DIR_INFORMATION *) malloc(sizeof(FILE_ID_FULL_DIR_INFORMATION)*maxitems);
+		if(!buffer) throw std::bad_alloc();
+		auto unbuffer=detail::Undoer([&buffer] { free(buffer); });
+
+		if(0/*STATUS_SUCCESS*/!=NtQueryDirectoryFile(h, NULL, NULL, NULL, &isb, buffer, (ULONG)(sizeof(FILE_ID_FULL_DIR_INFORMATION)*maxitems),
+			FileIdFullDirectoryInformation, FALSE, glob.empty() ? NULL : &_glob, FALSE))
+		{
+			return ret;
+		}
+		ret=std::unique_ptr<std::vector<directory_entry>>(new std::vector<directory_entry>);
+		std::vector<directory_entry> &_ret=*ret;
+		_ret.reserve(maxitems);
+		directory_entry item;
+		// This is what windows returns with each enumeration
+		item.have_metadata.have_ino=1;
+		item.have_metadata.have_rdev=1;
+		item.have_metadata.have_atimespec=1;
+		item.have_metadata.have_mtimespec=1;
+		item.have_metadata.have_ctimespec=1;
+		item.have_metadata.have_size=1;
+		item.have_metadata.have_allocated=1;
+		item.have_metadata.have_birthtimespec=1;
+		bool done=false;
+		for(FILE_ID_FULL_DIR_INFORMATION *ffdi=buffer; !done; ffdi=(FILE_ID_FULL_DIR_INFORMATION *)((size_t) ffdi + ffdi->NextEntryOffset))
+		{
+			size_t length=ffdi->FileNameLength/sizeof(std::filesystem::path::value_type);
+			if(length<=2 && '.'==ffdi->FileName[0])
+				if(1==length || '.'==ffdi->FileName[1]) continue;
+			std::filesystem::path::string_type leafname(ffdi->FileName, length);
+			item.leafname=std::move(leafname);
+			item.stat.st_ino=ffdi->FileId.QuadPart;
+			item.stat.st_rdev=(ffdi->FileAttributes&FILE_ATTRIBUTE_DIRECTORY) ? S_IFDIR : S_IFREG;
+			item.stat.st_atimespec=to_timespec(ffdi->LastAccessTime);
+			item.stat.st_mtimespec=to_timespec(ffdi->LastWriteTime);
+			item.stat.st_ctimespec=to_timespec(ffdi->ChangeTime);
+			item.stat.st_size=ffdi->EndOfFile.QuadPart;
+			item.stat.st_allocated=ffdi->AllocationSize.QuadPart;
+			item.stat.st_birthtimespec=to_timespec(ffdi->CreationTime);
+			_ret.push_back(std::move(item));
+			if(!ffdi->NextEntryOffset) done=true;
+		}
 	}
 	return ret;
 #else

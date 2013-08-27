@@ -28,6 +28,7 @@ Intel Core i7-3770K CPU @ 3.50Ghz:
 
 Windows 8 x64, NTFS with most common members of struct stat: approx 1.5m
 entries enumerated per second max (i.e. from RAM cache). Makes little difference
-if SSD or conventional magnetic.
+if SSD or conventional magnetic. Note that setting namesonly=true is actually much
+slower, only 1m per second max. I assume this is due to an less optimised code path.
 
 Linux 3.2 x64, ext4: to come.

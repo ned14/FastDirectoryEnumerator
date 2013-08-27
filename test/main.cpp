@@ -71,18 +71,33 @@ int main(void)
 	}
 
 	// Enumerate
-	std::cout << "Enumerating " << NUMBER_OF_FILES << " files. This hopefully will be exceptionally swift ..." << std::endl;
+	std::cout << "Enumerating " << NUMBER_OF_FILES << " files as filenames. This hopefully will be exceptionally swift ..." << std::endl;
     auto begin=chrono::high_resolution_clock::now();
 	void *h=begin_enumerate_directory(_L("testdir"));
-	std::shared_ptr<std::vector<directory_entry>> enumeration, chunk;
-	while((chunk=enumerate_directory(h, NUMBER_OF_FILES)))
+	std::unique_ptr<std::vector<directory_entry>> enumeration, chunk;
+	while((chunk=enumerate_directory(h, NUMBER_OF_FILES, std::filesystem::path(), true)))
 		if(!enumeration)
-			enumeration=chunk;
+			enumeration=std::move(chunk);
 		else
 			enumeration->insert(enumeration->end(), std::make_move_iterator(chunk->begin()), std::make_move_iterator(chunk->end()));
 	end_enumerate_directory(h);
     auto end=chrono::high_resolution_clock::now();
     auto diff=chrono::duration_cast<secs_type>(end-begin);
+    std::cout << "It took " << diff.count() << " secs to enumerate " << NUMBER_OF_FILES << " entries which is " << NUMBER_OF_FILES/diff.count() << " entries per second." << std::endl;
+	enumeration.release();
+
+	// Enumerate
+	std::cout << "Enumerating " << NUMBER_OF_FILES << " files. This hopefully will be exceptionally swift ..." << std::endl;
+    begin=chrono::high_resolution_clock::now();
+	h=begin_enumerate_directory(_L("testdir"));
+	while((chunk=enumerate_directory(h, NUMBER_OF_FILES)))
+		if(!enumeration)
+			enumeration=std::move(chunk);
+		else
+			enumeration->insert(enumeration->end(), std::make_move_iterator(chunk->begin()), std::make_move_iterator(chunk->end()));
+	end_enumerate_directory(h);
+    end=chrono::high_resolution_clock::now();
+    diff=chrono::duration_cast<secs_type>(end-begin);
     std::cout << "It took " << diff.count() << " secs to enumerate " << NUMBER_OF_FILES << " entries which is " << NUMBER_OF_FILES/diff.count() << " entries per second." << std::endl;
 
 	// Check results

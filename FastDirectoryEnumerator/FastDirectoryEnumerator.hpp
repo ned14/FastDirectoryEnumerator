@@ -41,7 +41,7 @@ namespace FastDirectoryEnumerator
 	//! An entry in a directory
 	class FASTDIRECTORYENUMERATOR_API directory_entry
 	{
-		friend std::shared_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_t maxitems, std::filesystem::path glob=std::filesystem::path());
+		friend std::unique_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_t maxitems, std::filesystem::path glob=std::filesystem::path(), bool namesonly=false);
 
 		std::filesystem::path leafname;
 		have_metadata_flags have_metadata;
@@ -130,8 +130,28 @@ namespace FastDirectoryEnumerator
 	extern FASTDIRECTORYENUMERATOR_API void *begin_enumerate_directory(std::filesystem::path path);
 	//! Ends the enumeration of a directory. This simply closes the fd or `HANDLE`.
 	extern FASTDIRECTORYENUMERATOR_API void end_enumerate_directory(void *h);
-	//! Enumerates a directory as quickly as possible, retrieving all zero-cost metadata. Windows returns the common items, Linux usually returns only `st_rdev`, other POSIX just the leafname. A null pointer means end of enumeration.
-	extern FASTDIRECTORYENUMERATOR_API std::shared_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_t maxitems, std::filesystem::path glob);
+	/*! \brief Enumerates a directory as quickly as possible, retrieving all zero-cost metadata.
+
+	Note that maxitems items may not be retreived for various reasons, including that glob filtered them out.
+	A zero item vector return is entirely possible, but this does not mean end of enumeration: only a null
+	shared_ptr means that.
+
+	Windows returns the common stat items, Linux usually returns only `st_rdev`, other POSIX just the leafname.
+	Setting namesonly to true returns as little information as possible.
+
+	Suggested code for merging chunks of enumeration into a single vector:
+	\code
+	void *h=begin_enumerate_directory(_L("testdir"));
+	std::unique_ptr<std::vector<directory_entry>> enumeration, chunk;
+	while((chunk=enumerate_directory(h, NUMBER_OF_FILES)))
+		if(!enumeration)
+			enumeration=std::move(chunk);
+		else
+			enumeration->insert(enumeration->end(), std::make_move_iterator(chunk->begin()), std::make_move_iterator(chunk->end()));
+	end_enumerate_directory(h);
+	\endcode
+	*/
+	extern FASTDIRECTORYENUMERATOR_API std::unique_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_t maxitems, std::filesystem::path glob, bool namesonly);
 } // namespace
 
 namespace std
