@@ -1,5 +1,5 @@
 /* FastDirectoryEnumerator
-Fixme
+Enumerates very, very large directories quickly by directly using kernel syscalls. For POSIX and Windows.
 (C) 2013 Niall Douglas http://www.nedprod.com/
 File created: Aug 2013
 */

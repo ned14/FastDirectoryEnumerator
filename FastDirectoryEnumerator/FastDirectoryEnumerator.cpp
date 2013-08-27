@@ -1,5 +1,5 @@
 /* FastDirectoryEnumerator
-Fixme
+Enumerates very, very large directories quickly by directly using kernel syscalls. For POSIX and Windows.
 (C) 2013 Niall Douglas http://www.nedprod.com/
 File created: Aug 2013
 */
@@ -227,6 +227,7 @@ std::shared_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_
 	item.have_metadata.have_rdev=1;
 	item.have_metadata.have_atimespec=1;
 	item.have_metadata.have_mtimespec=1;
+	item.have_metadata.have_ctimespec=1;
 	item.have_metadata.have_size=1;
 	item.have_metadata.have_allocated=1;
 	item.have_metadata.have_birthtimespec=1;
