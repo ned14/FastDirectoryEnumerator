@@ -20,6 +20,7 @@ File created: Aug 2013
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/syscall.h>
+#include <fnmatch.h>
 #endif
 
 namespace FastDirectoryEnumerator
@@ -706,7 +707,7 @@ std::unique_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_
 		size_t length=strchr(dent->d_name, 0)-dent->d_name;
 		if(length<=2 && '.'==dent->d_name[0])
 			if(1==length || '.'==dent->d_name[1]) continue;
-		todo globbing;
+		if(!glob.empty() && fnmatch(glob.native().c_str(), dent->d_name, 0)) continue;
 		std::filesystem::path::string_type leafname(dent->d_name, length);
 		item.leafname=std::move(leafname);
 		item.stat.st_ino=dent->d_ino;
