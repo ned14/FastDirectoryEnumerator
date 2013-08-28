@@ -13,6 +13,11 @@ File created: Aug 2013
 
 #include "std_filesystem.hpp"
 #include <sys/types.h>
+#ifdef WIN32
+#ifndef S_IFLNK
+#define S_IFLNK 0x1400
+#endif
+#endif
 
 namespace FastDirectoryEnumerator
 {

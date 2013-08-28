@@ -30,6 +30,7 @@ File created: Aug 2013
 #define POSIX_FSYNC _commit
 #define _L(f) L##f
 #define POSIX_SPRINTF swprintf
+extern "C" int __stdcall CreateSymbolicLinkW(wchar_t *lpSymlinkFileName, wchar_t *lpTargetFileName, int dwFlags);
 #else
 #include <sys/uio.h>
 #include <limits.h>
@@ -98,6 +99,11 @@ int main(void)
 		if(-1==fh) abort();
 		POSIX_CLOSE(fh);
 	}
+#ifdef WIN32
+	CreateSymbolicLinkW(_L("testdir\\link"), _L("000000000000"), 0);
+#else
+	symlink("000000000000", "testdir/link");
+#endif
 
 	// Enumerate
 	std::cout << "Enumerating " << NUMBER_OF_FILES << " files as filenames. This hopefully will be exceptionally swift ..." << std::endl;
@@ -154,28 +160,38 @@ int main(void)
 
     if(enumeration)
     {
-    	auto &entry=enumeration->front();
-    	std::cout << "First entry is called " << entry.name() << " and it has the following information:" << std::endl;
+    	for(auto &entry : *enumeration)
+		{
+			if(entry.name()==_L("000000000000") || entry.name()==_L("link"))
+			{
+		    	std::cout << "Entry is a ";
+				if(entry.st_type() & S_IFLNK)
+					std::cout << "link";
+				else
+					std::cout << "file";
+				std::cout << " called " << entry.name() << " and it has the following information:" << std::endl;
 #define PRINT_FIELD(field) \
-    	std::cout << "  st_" #field ": "; if(entry.metadata_ready().have_##field) std::cout << entry.st_##field(); else std::cout << "unknown"; std::cout << std::endl
-    	PRINT_FIELD(dev);
-    	PRINT_FIELD(ino);
-    	PRINT_FIELD(type);
-    	PRINT_FIELD(mode);
-    	PRINT_FIELD(nlink);
-    	PRINT_FIELD(uid);
-    	PRINT_FIELD(gid);
-    	PRINT_FIELD(rdev);
-    	PRINT_FIELD(atim);
-    	PRINT_FIELD(mtim);
-    	PRINT_FIELD(ctim);
-    	PRINT_FIELD(size);
-    	PRINT_FIELD(allocated);
-    	PRINT_FIELD(blocks);
-    	PRINT_FIELD(blksize);
-    	PRINT_FIELD(flags);
-    	PRINT_FIELD(gen);
-    	PRINT_FIELD(birthtim);
+    			std::cout << "  st_" #field ": "; if(entry.metadata_ready().have_##field) std::cout << entry.st_##field(); else std::cout << "unknown"; std::cout << std::endl
+    			PRINT_FIELD(dev);
+    			PRINT_FIELD(ino);
+    			PRINT_FIELD(type);
+    			PRINT_FIELD(mode);
+    			PRINT_FIELD(nlink);
+    			PRINT_FIELD(uid);
+    			PRINT_FIELD(gid);
+    			PRINT_FIELD(rdev);
+    			PRINT_FIELD(atim);
+    			PRINT_FIELD(mtim);
+    			PRINT_FIELD(ctim);
+    			PRINT_FIELD(size);
+    			PRINT_FIELD(allocated);
+    			PRINT_FIELD(blocks);
+    			PRINT_FIELD(blksize);
+    			PRINT_FIELD(flags);
+    			PRINT_FIELD(gen);
+    			PRINT_FIELD(birthtim);
+			}
+		}
     }
 
 	// Check results

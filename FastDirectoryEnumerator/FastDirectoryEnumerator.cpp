@@ -37,6 +37,17 @@ static inline struct timespec to_timespec(LARGE_INTEGER time)
 	ts.tv_nsec = (long)((time.QuadPart - TIMESPEC_TO_FILETIME_OFFSET - ((long long)ts.tv_sec * (long long)10000000)) * 100);
 	return ts;
 }
+
+static inline uint16_t to_st_type(ULONG FileAttributes, uint16_t mode=0)
+{
+	if(FileAttributes&FILE_ATTRIBUTE_REPARSE_POINT)
+		mode|=S_IFLNK;
+	else if(FileAttributes&FILE_ATTRIBUTE_DIRECTORY)
+		mode|=S_IFDIR;
+	else
+		mode|=S_IFREG;
+	return mode;
+}
 #endif
 
 have_metadata_flags directory_entry::metadata_supported() BOOST_NOEXCEPT_OR_NOTHROW
@@ -479,7 +490,7 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 			FileIdFullDirectoryInformation, TRUE, &_glob, FALSE)))
 			return;
 		if(wanted.have_ino) { stat.st_ino=ffdi->FileId.QuadPart; have_metadata.have_ino=1; }
-		if(wanted.have_type) { stat.st_type=(ffdi->FileAttributes&FILE_ATTRIBUTE_DIRECTORY) ? S_IFDIR : S_IFREG; have_metadata.have_type=1; }
+		if(wanted.have_type) { stat.st_type=to_st_type(ffdi->FileAttributes); have_metadata.have_type=1; }
 		if(wanted.have_atim) { stat.st_atim=to_timespec(ffdi->LastAccessTime); have_metadata.have_atim=1; }
 		if(wanted.have_mtim) { stat.st_mtim=to_timespec(ffdi->LastWriteTime); have_metadata.have_mtim=1; }
 		if(wanted.have_ctim) { stat.st_ctim=to_timespec(ffdi->ChangeTime); have_metadata.have_ctim=1; }
@@ -496,7 +507,8 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 		oa.ObjectName=&path;
 		oa.RootDirectory=dirhinfo.h;
 		oa.Attributes=0x40/*OBJ_CASE_INSENSITIVE*/; //|0x100/*OBJ_OPENLINK*/;
-		ntval=NtOpenFile(&h, FILE_READ_ATTRIBUTES, &oa, &isb, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, 0x040/*FILE_NON_DIRECTORY_FILE*/|0x4000/*FILE_OPEN_FOR_BACKUP_INTENT*/);
+		ntval=NtOpenFile(&h, FILE_READ_ATTRIBUTES, &oa, &isb, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			0x040/*FILE_NON_DIRECTORY_FILE*/|0x4000/*FILE_OPEN_FOR_BACKUP_INTENT*/|0x00200000/*FILE_OPEN_REPARSE_POINT*/);
 		//ntval=NtCreateFile(&h, FILE_READ_ATTRIBUTES, &oa, &isb, NULL, 0, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
 		//	0x1/*FILE_OPEN*/, 0x040/*FILE_NON_DIRECTORY_FILE*/|0x4000/*FILE_OPEN_FOR_BACKUP_INTENT*/, NULL, 0);
 		if(0/*STATUS_SUCCESS*/!=ntval)
@@ -526,7 +538,7 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 		if(0/*STATUS_SUCCESS*/!=ntval)
 			return;
 		if(wanted.have_ino) { stat.st_ino=fai.InternalInformation.IndexNumber.QuadPart; have_metadata.have_ino=1; }
-		if(wanted.have_type) { stat.st_type=(fai.BasicInformation.FileAttributes&FILE_ATTRIBUTE_DIRECTORY) ? S_IFDIR : S_IFREG; have_metadata.have_type=1; }
+		if(wanted.have_type) { stat.st_type=to_st_type(fai.BasicInformation.FileAttributes); have_metadata.have_type=1; }
 		if(wanted.have_nlink) { stat.st_nlink=(int16_t) fai.StandardInformation.NumberOfLinks; have_metadata.have_nlink=1; }
 		if(wanted.have_atim) { stat.st_atim=to_timespec(fai.BasicInformation.LastAccessTime); have_metadata.have_atim=1; }
 		if(wanted.have_mtim) { stat.st_mtim=to_timespec(fai.BasicInformation.LastWriteTime); have_metadata.have_mtim=1; }
@@ -789,7 +801,7 @@ std::unique_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_
 			std::filesystem::path::string_type leafname(ffdi->FileName, length);
 			item.leafname=std::move(leafname);
 			item.stat.st_ino=ffdi->FileId.QuadPart;
-			item.stat.st_type=(ffdi->FileAttributes&FILE_ATTRIBUTE_DIRECTORY) ? S_IFDIR : S_IFREG;
+			item.stat.st_type=to_st_type(ffdi->FileAttributes);
 			item.stat.st_atim=to_timespec(ffdi->LastAccessTime);
 			item.stat.st_mtim=to_timespec(ffdi->LastWriteTime);
 			item.stat.st_ctim=to_timespec(ffdi->ChangeTime);
