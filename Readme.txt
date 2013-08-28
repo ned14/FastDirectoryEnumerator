@@ -23,15 +23,26 @@ This syscall returns the leafname and the following stat fields:
 * st_allocated (this is st_blksize * st_blocks)
 * st_birthtimespec
 
+Therefore fields missing are:
+
+* st_nlink
+* st_blocks
+* st_blksize
+
+WARNING: Fetching any metadata not returned by enumeration is exceptionally slow: only 30k
+fetches per second. This is because NT requires you to open a file in order to read metadata
+about it, and it is not quick at opening and closing files, even though we are using the NT
+kernel API directly (it's 40% worse again using the Win32 CreateFile() API).
+
 
 Some quick benchmarks:
 ----------------------
 
 Intel Core i7-3770K CPU @ 3.50Ghz:
 
-Windows 8 x64, NTFS: approx 1.5m entries enumerated per second max (i.e. from RAM cache)
+Windows 8 x64, NTFS: approx 1.8m entries enumerated per second max (i.e. from RAM cache)
 with common stat fields listed above. Makes little difference if SSD or conventional magnetic.
-Note that setting namesonly=true is actually much slower, only 1m per second max. I assume
+Note that setting namesonly=true is actually a bit slower, only 1.5m per second max. I assume
 this is due to an less optimised code path.
 
 Linux 3.2 x64, ext4: approx 2.5m entries enumerated per second max (i.e. from RAM cache)

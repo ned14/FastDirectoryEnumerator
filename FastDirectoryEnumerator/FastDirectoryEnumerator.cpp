@@ -172,6 +172,19 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 		FileMaximumInformation
 	} FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
 
+	typedef enum  { 
+	  FileFsVolumeInformation       = 1,
+	  FileFsLabelInformation        = 2,
+	  FileFsSizeInformation         = 3,
+	  FileFsDeviceInformation       = 4,
+	  FileFsAttributeInformation    = 5,
+	  FileFsControlInformation      = 6,
+	  FileFsFullSizeInformation     = 7,
+	  FileFsObjectIdInformation     = 8,
+	  FileFsDriverPathInformation   = 9,
+	  FileFsVolumeFlagsInformation  = 10,
+	  FileFsSectorSizeInformation   = 11
+	} FS_INFORMATION_CLASS;
 #ifndef NTSTATUS
 #define NTSTATUS LONG
 #endif
@@ -185,6 +198,35 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 		ULONG_PTR Information;
 	} IO_STATUS_BLOCK, *PIO_STATUS_BLOCK;
 
+	// From http://msdn.microsoft.com/en-us/library/windows/desktop/aa380518(v=vs.85).aspx
+	typedef struct _LSA_UNICODE_STRING {
+	  USHORT Length;
+	  USHORT MaximumLength;
+	  PWSTR  Buffer;
+	} LSA_UNICODE_STRING, *PLSA_UNICODE_STRING, UNICODE_STRING, *PUNICODE_STRING;
+
+	// From http://msdn.microsoft.com/en-us/library/windows/hardware/ff557749(v=vs.85).aspx
+	typedef struct _OBJECT_ATTRIBUTES {
+	  ULONG           Length;
+	  HANDLE          RootDirectory;
+	  PUNICODE_STRING ObjectName;
+	  ULONG           Attributes;
+	  PVOID           SecurityDescriptor;
+	  PVOID           SecurityQualityOfService;
+	}  OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES;
+
+	typedef struct _RTLP_CURDIR_REF
+	{
+		LONG RefCount;
+		HANDLE Handle;
+	} RTLP_CURDIR_REF, *PRTLP_CURDIR_REF;
+
+	typedef struct RTL_RELATIVE_NAME_U {
+		UNICODE_STRING RelativeName;
+		HANDLE ContainingDirectory;
+		PRTLP_CURDIR_REF CurDirRef;
+	} RTL_RELATIVE_NAME_U, *PRTL_RELATIVE_NAME_U;
+
 	// From http://undocumented.ntinternals.net/UserMode/Undocumented%20Functions/NT%20Objects/File/NtQueryInformationFile.html
 	// and http://msdn.microsoft.com/en-us/library/windows/hardware/ff567052(v=vs.85).aspx
 	typedef NTSTATUS (NTAPI *NtQueryInformationFile_t)(
@@ -194,6 +236,35 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 		/*_In_*/   ULONG Length,
 		/*_In_*/   FILE_INFORMATION_CLASS FileInformationClass
 		);
+
+	// From http://msdn.microsoft.com/en-us/library/windows/hardware/ff567070(v=vs.85).aspx
+	typedef NTSTATUS (NTAPI *NtQueryVolumeInformationFile_t)(
+		/*_In_*/   HANDLE FileHandle,
+		/*_Out_*/  PIO_STATUS_BLOCK IoStatusBlock,
+		/*_Out_*/  PVOID FsInformation,
+		/*_In_*/   ULONG Length,
+		/*_In_*/   FS_INFORMATION_CLASS FsInformationClass
+		);
+
+	// From http://msdn.microsoft.com/en-us/library/windows/hardware/ff567011(v=vs.85).aspx
+	typedef NTSTATUS (NTAPI *NtOpenFile_t)(
+	  /*_Out_*/  PHANDLE FileHandle,
+	  /*_In_*/   ACCESS_MASK DesiredAccess,
+	  /*_In_*/   POBJECT_ATTRIBUTES ObjectAttributes,
+	  /*_Out_*/  PIO_STATUS_BLOCK IoStatusBlock,
+	  /*_In_*/   ULONG ShareAccess,
+	  /*_In_*/   ULONG OpenOptions
+	);
+
+	typedef NTSTATUS (NTAPI *NtClose_t)(
+	  /*_Out_*/  HANDLE FileHandle
+	);
+
+	typedef BOOLEAN (NTAPI *RtlDosPathNameToNtPathName_U_t)(
+                             PCWSTR DosName,
+                             PUNICODE_STRING NtName,
+                             PCWSTR *PartName,
+                             PRTL_RELATIVE_NAME_U RelativeName);
 
 	typedef struct _FILE_BASIC_INFORMATION {
 	  LARGE_INTEGER CreationTime;
@@ -252,21 +323,77 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 	  FILE_NAME_INFORMATION      NameInformation;
 	} FILE_ALL_INFORMATION, *PFILE_ALL_INFORMATION;
 
+	typedef struct _FILE_FS_SECTOR_SIZE_INFORMATION {
+	  ULONG LogicalBytesPerSector;
+	  ULONG PhysicalBytesPerSectorForAtomicity;
+	  ULONG PhysicalBytesPerSectorForPerformance;
+	  ULONG FileSystemEffectivePhysicalBytesPerSectorForAtomicity;
+	  ULONG Flags;
+	  ULONG ByteOffsetForSectorAlignment;
+	  ULONG ByteOffsetForPartitionAlignment;
+	} FILE_FS_SECTOR_SIZE_INFORMATION, *PFILE_FS_SECTOR_SIZE_INFORMATION;
+
 	static NtQueryInformationFile_t NtQueryInformationFile;
 	if(!NtQueryInformationFile)
 		if(!(NtQueryInformationFile=(NtQueryInformationFile_t) GetProcAddress(GetModuleHandleA("NTDLL.DLL"), "NtQueryInformationFile")))
 			abort();
+	static NtQueryVolumeInformationFile_t NtQueryVolumeInformationFile;
+	if(!NtQueryVolumeInformationFile)
+		if(!(NtQueryVolumeInformationFile=(NtQueryVolumeInformationFile_t) GetProcAddress(GetModuleHandleA("NTDLL.DLL"), "NtQueryVolumeInformationFile")))
+			abort();
+	static NtOpenFile_t NtOpenFile;
+	if(!NtOpenFile)
+		if(!(NtOpenFile=(NtOpenFile_t) GetProcAddress(GetModuleHandleA("NTDLL.DLL"), "NtOpenFile")))
+			abort();
+	static NtClose_t NtClose;
+	if(!NtClose)
+		if(!(NtClose=(NtClose_t) GetProcAddress(GetModuleHandleA("NTDLL.DLL"), "NtClose")))
+			abort();
+	static RtlDosPathNameToNtPathName_U_t RtlDosPathNameToNtPathName_U;
+	if(!RtlDosPathNameToNtPathName_U)
+		if(!(RtlDosPathNameToNtPathName_U=(RtlDosPathNameToNtPathName_U_t) GetProcAddress(GetModuleHandleA("NTDLL.DLL"), "RtlDosPathNameToNtPathName_U")))
+			abort();
 
 	IO_STATUS_BLOCK isb={ 0 };
 
-	// It's not widely known that the NT kernel supplies a stat() equivalent i.e. get me everything in a single syscall
+	NTSTATUS ntval=0;
+	HANDLE h=nullptr;
 	std::filesystem::path::value_type buffer[sizeof(FILE_ALL_INFORMATION)/sizeof(std::filesystem::path::value_type)+32769];
+	UNICODE_STRING path;
+	DWORD currentpathlen=GetCurrentDirectory(sizeof(buffer), buffer);
+	std::filesystem::path _path(std::filesystem::path::string_type(buffer, currentpathlen));
+	_path/=prefix;
+	path.Buffer=buffer;
+	path.Length=sizeof(buffer)/sizeof(buffer[0]);
+	RtlDosPathNameToNtPathName_U(_path.c_str(), &path, NULL, NULL);
+	OBJECT_ATTRIBUTES oa={sizeof(OBJECT_ATTRIBUTES)};
+	oa.ObjectName=&path;
+	oa.Attributes=0x40/*OBJ_CASE_INSENSITIVE*/; //|0x100/*OBJ_OPENLINK*/;
+	ntval=NtOpenFile(&h, FILE_READ_ATTRIBUTES, &oa, &isb, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, 0x040/*FILE_NON_DIRECTORY_FILE*/|0x4000/*FILE_OPEN_FOR_BACKUP_INTENT*/);
+	if(0/*STATUS_SUCCESS*/!=ntval)
+		return;
 	FILE_ALL_INFORMATION &fai=*(FILE_ALL_INFORMATION *)buffer;
-	HANDLE h=CreateFile(prefix.c_str(), FILE_READ_DATA|FILE_READ_EA|FILE_READ_ATTRIBUTES, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, NULL,
-		OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-	if(INVALID_HANDLE_VALUE==h) return;
-	NTSTATUS ntval=NtQueryInformationFile(h, &isb, &fai, sizeof(buffer), FileAllInformation);
-	CloseHandle(h);
+	FILE_FS_SECTOR_SIZE_INFORMATION ffssi={0};
+	bool needInternal=(wanted.have_ino);
+	bool needBasic=(wanted.have_type || wanted.have_atim || wanted.have_mtim || wanted.have_ctim || wanted.have_birthtim);
+	bool needStandard=(wanted.have_nlink || wanted.have_size || wanted.have_allocated || wanted.have_blocks);
+	// It's not widely known that the NT kernel supplies a stat() equivalent i.e. get me everything in a single syscall
+	// However fetching FileAlignmentInformation which comes with FILE_ALL_INFORMATION is slow as it touches the device driver,
+	// so only use if we need more than one item
+	if((needInternal+needBasic+needStandard)>=2)
+		ntval|=NtQueryInformationFile(h, &isb, &fai, sizeof(buffer), FileAllInformation);
+	else
+	{
+		if(needInternal)
+			ntval|=NtQueryInformationFile(h, &isb, &fai.InternalInformation, sizeof(fai.InternalInformation), FileInternalInformation);
+		if(needBasic)
+			ntval|=NtQueryInformationFile(h, &isb, &fai.BasicInformation, sizeof(fai.BasicInformation), FileBasicInformation);
+		if(needStandard)
+			ntval|=NtQueryInformationFile(h, &isb, &fai.StandardInformation, sizeof(fai.StandardInformation), FileStandardInformation);
+	}
+	if(wanted.have_blocks || wanted.have_blksize)
+		ntval|=NtQueryVolumeInformationFile(h, &isb, &ffssi, sizeof(ffssi), FileFsSectorSizeInformation);
+	NtClose(h);
 	if(0/*STATUS_SUCCESS*/!=ntval)
 		return;
 	if(wanted.have_ino) { stat.st_ino=fai.InternalInformation.IndexNumber.QuadPart; have_metadata.have_ino=1; }
@@ -277,8 +404,8 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 	if(wanted.have_ctim) { stat.st_ctim=to_timespec(fai.BasicInformation.ChangeTime); have_metadata.have_ctim=1; }
 	if(wanted.have_size) { stat.st_size=fai.StandardInformation.EndOfFile.QuadPart; have_metadata.have_size=1; }
 	if(wanted.have_allocated) { stat.st_allocated=fai.StandardInformation.AllocationSize.QuadPart; have_metadata.have_allocated=1; }
-	if(wanted.have_blocks) { stat.st_blocks=fai.StandardInformation.AllocationSize.QuadPart/fai.AlignmentInformation.AlignmentRequirement; have_metadata.have_blocks=1; }
-	if(wanted.have_blksize) { stat.st_blksize=(uint16_t) fai.AlignmentInformation.AlignmentRequirement; have_metadata.have_blksize=1; }
+	//if(wanted.have_blocks) { stat.st_blocks=fai.StandardInformation.AllocationSize.QuadPart/ffssi.PhysicalBytesPerSectorForPerformance; have_metadata.have_blocks=1; }
+	if(wanted.have_blksize) { stat.st_blksize=(uint16_t) ffssi.PhysicalBytesPerSectorForPerformance; have_metadata.have_blksize=1; }
 	if(wanted.have_birthtim) { stat.st_birthtim=to_timespec(fai.BasicInformation.CreationTime); have_metadata.have_birthtim=1; }
 #else
 	struct stat s={0};
