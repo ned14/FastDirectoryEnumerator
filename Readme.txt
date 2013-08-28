@@ -2,11 +2,13 @@ FastDirectoryEnumerator
 -=-=-=-=-=-=-=-=-=-=-=-
 (C) 2013 Niall Douglas
 
-Herein lies C++11 code which enumerates very, very large directories quickly
+Herein lies C++11 code which enumerates and stat()'s very, very large directories quickly
 by directly using kernel syscalls. For POSIX and Windows.
 
-Note that st_type contains the S_IF* flags part of the st_mode field only. st_mode is the same as stat.
-st_allocated is st_blksize multiplied by st_blocks and is also available on Windows.
+Differences from struct stat:
+
+* st_type contains the S_IF* flags part of the st_mode field only. st_mode is the same as stat.
+* st_allocated is st_blksize multiplied by st_blocks.
 
 On POSIX directly uses the getdents() syscall (http://man7.org/linux/man-pages/man2/getdents.2.html).
 This syscall returns the leafname, st_ino and st_type fields only.
@@ -23,17 +25,23 @@ This syscall returns the leafname and the following stat fields:
 * st_allocated (this is st_blksize * st_blocks)
 * st_birthtimespec
 
-Therefore fields missing are:
+Therefore fields missing from enumeration are:
 
 * st_nlink
 * st_blocks
 * st_blksize
 
-WARNING: Fetching any metadata not returned by enumeration is exceptionally slow: only 30k
-fetches per second. This is because NT requires you to open a file in order to read metadata
-about it, and it is not quick at opening and closing files, even though we are using the NT
-kernel API directly (it's 40% worse again using the Win32 CreateFile() API).
+Fetching these invoke a slow code path: Windows gives you no choice but to open a handle
+to the file being queried, something which is very slow on NT. Expect a max of 30k slow
+path queries per second as Windows can only open 30k HANDLEs per second.
 
+There is something else you should be aware of: class directory_entry optimises same-directory
+metadata lookups by caching per-thread a handle to the containing directory. Given that
+metadata lookups tend to be from the same directory, and assuming that none of the slow
+code path fields above have been requested, directory_entry can fetch metadata by doing
+a globbed enumeration instead, yielding about 250k lookups per second max. As soon as you
+change contained directory, or ask for any slow code path fields, expect 30k lookups per
+second max.
 
 Some quick benchmarks:
 ----------------------
