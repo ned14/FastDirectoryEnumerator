@@ -42,23 +42,23 @@ have_metadata_flags directory_entry::metadata_supported() BOOST_NOEXCEPT_OR_NOTH
 	have_metadata_flags ret; ret.value=0;
 #ifdef WIN32
 	ret.have_dev=0;
-	ret.have_ino=1;
-	ret.have_type=1;
+	ret.have_ino=1;        // FILE_INTERNAL_INFORMATION, enumerated
+	ret.have_type=1;       // FILE_BASIC_INFORMATION, enumerated
 	ret.have_mode=0;
-	ret.have_nlink=1;
+	ret.have_nlink=1;      // FILE_STANDARD_INFORMATION
 	ret.have_uid=0;
 	ret.have_gid=0;
 	ret.have_rdev=0;
-	ret.have_atim=1;
-	ret.have_mtim=1;
-	ret.have_ctim=1;
-	ret.have_size=1;
-	ret.have_allocated=1;
-	ret.have_blocks=0;
-	ret.have_blksize=0;
+	ret.have_atim=1;       // FILE_BASIC_INFORMATION, enumerated
+	ret.have_mtim=1;       // FILE_BASIC_INFORMATION, enumerated
+	ret.have_ctim=1;       // FILE_BASIC_INFORMATION, enumerated
+	ret.have_size=1;       // FILE_STANDARD_INFORMATION, enumerated
+	ret.have_allocated=1;  // FILE_STANDARD_INFORMATION, enumerated
+	ret.have_blocks=1;
+	ret.have_blksize=1;    // FILE_ALIGNMENT_INFORMATION
 	ret.have_flags=0;
-	ret.have_gen=1;
-	ret.have_birthtim=1;
+	ret.have_gen=0;
+	ret.have_birthtim=1;   // FILE_BASIC_INFORMATION, enumerated
 #elif defined(__linux__)
 	ret.have_dev=1;
 	ret.have_ino=1;
@@ -112,7 +112,174 @@ void directory_entry::_int_fetch(have_metadata_flags wanted, std::filesystem::pa
 {
 	prefix/=leafname;
 #ifdef WIN32
-	throw std::runtime_error("Not implemented yet");
+	// From http://undocumented.ntinternals.net/UserMode/Undocumented%20Functions/NT%20Objects/File/FILE_INFORMATION_CLASS.html
+	typedef enum _FILE_INFORMATION_CLASS {
+		FileDirectoryInformation                 = 1,
+		FileFullDirectoryInformation,
+		FileBothDirectoryInformation,
+		FileBasicInformation,
+		FileStandardInformation,
+		FileInternalInformation,
+		FileEaInformation,
+		FileAccessInformation,
+		FileNameInformation,
+		FileRenameInformation,
+		FileLinkInformation,
+		FileNamesInformation,
+		FileDispositionInformation,
+		FilePositionInformation,
+		FileFullEaInformation,
+		FileModeInformation,
+		FileAlignmentInformation,
+		FileAllInformation,
+		FileAllocationInformation,
+		FileEndOfFileInformation,
+		FileAlternateNameInformation,
+		FileStreamInformation,
+		FilePipeInformation,
+		FilePipeLocalInformation,
+		FilePipeRemoteInformation,
+		FileMailslotQueryInformation,
+		FileMailslotSetInformation,
+		FileCompressionInformation,
+		FileObjectIdInformation,
+		FileCompletionInformation,
+		FileMoveClusterInformation,
+		FileQuotaInformation,
+		FileReparsePointInformation,
+		FileNetworkOpenInformation,
+		FileAttributeTagInformation,
+		FileTrackingInformation,
+		FileIdBothDirectoryInformation,
+		FileIdFullDirectoryInformation,
+		FileValidDataLengthInformation,
+		FileShortNameInformation,
+		FileIoCompletionNotificationInformation,
+		FileIoStatusBlockRangeInformation,
+		FileIoPriorityHintInformation,
+		FileSfioReserveInformation,
+		FileSfioVolumeInformation,
+		FileHardLinkInformation,
+		FileProcessIdsUsingFileInformation,
+		FileNormalizedNameInformation,
+		FileNetworkPhysicalNameInformation,
+		FileIdGlobalTxDirectoryInformation,
+		FileIsRemoteDeviceInformation,
+		FileAttributeCacheInformation,
+		FileNumaNodeInformation,
+		FileStandardLinkInformation,
+		FileRemoteProtocolInformation,
+		FileMaximumInformation
+	} FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
+
+#ifndef NTSTATUS
+#define NTSTATUS LONG
+#endif
+
+	// From http://msdn.microsoft.com/en-us/library/windows/hardware/ff550671(v=vs.85).aspx
+	typedef struct _IO_STATUS_BLOCK {
+		union {
+			NTSTATUS Status;
+			PVOID    Pointer;
+		};
+		ULONG_PTR Information;
+	} IO_STATUS_BLOCK, *PIO_STATUS_BLOCK;
+
+	// From http://undocumented.ntinternals.net/UserMode/Undocumented%20Functions/NT%20Objects/File/NtQueryInformationFile.html
+	// and http://msdn.microsoft.com/en-us/library/windows/hardware/ff567052(v=vs.85).aspx
+	typedef NTSTATUS (NTAPI *NtQueryInformationFile_t)(
+		/*_In_*/   HANDLE FileHandle,
+		/*_Out_*/  PIO_STATUS_BLOCK IoStatusBlock,
+		/*_Out_*/  PVOID FileInformation,
+		/*_In_*/   ULONG Length,
+		/*_In_*/   FILE_INFORMATION_CLASS FileInformationClass
+		);
+
+	typedef struct _FILE_BASIC_INFORMATION {
+	  LARGE_INTEGER CreationTime;
+	  LARGE_INTEGER LastAccessTime;
+	  LARGE_INTEGER LastWriteTime;
+	  LARGE_INTEGER ChangeTime;
+	  ULONG         FileAttributes;
+	} FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
+
+	typedef struct _FILE_STANDARD_INFORMATION {
+	  LARGE_INTEGER AllocationSize;
+	  LARGE_INTEGER EndOfFile;
+	  ULONG         NumberOfLinks;
+	  BOOLEAN       DeletePending;
+	  BOOLEAN       Directory;
+	} FILE_STANDARD_INFORMATION, *PFILE_STANDARD_INFORMATION;
+
+	typedef struct _FILE_INTERNAL_INFORMATION {
+	  LARGE_INTEGER IndexNumber;
+	} FILE_INTERNAL_INFORMATION, *PFILE_INTERNAL_INFORMATION;
+
+	typedef struct _FILE_EA_INFORMATION {
+	  ULONG EaSize;
+	} FILE_EA_INFORMATION, *PFILE_EA_INFORMATION;
+
+	typedef struct _FILE_ACCESS_INFORMATION {
+	  ACCESS_MASK AccessFlags;
+	} FILE_ACCESS_INFORMATION, *PFILE_ACCESS_INFORMATION;
+
+	typedef struct _FILE_POSITION_INFORMATION {
+	  LARGE_INTEGER CurrentByteOffset;
+	} FILE_POSITION_INFORMATION, *PFILE_POSITION_INFORMATION;
+
+	typedef struct _FILE_MODE_INFORMATION {
+	  ULONG Mode;
+	} FILE_MODE_INFORMATION, *PFILE_MODE_INFORMATION;
+
+	typedef struct _FILE_ALIGNMENT_INFORMATION {
+	  ULONG AlignmentRequirement;
+	} FILE_ALIGNMENT_INFORMATION, *PFILE_ALIGNMENT_INFORMATION;
+
+	typedef struct _FILE_NAME_INFORMATION {
+	  ULONG FileNameLength;
+	  WCHAR FileName[1];
+	} FILE_NAME_INFORMATION, *PFILE_NAME_INFORMATION;
+
+	typedef struct _FILE_ALL_INFORMATION {
+	  FILE_BASIC_INFORMATION     BasicInformation;
+	  FILE_STANDARD_INFORMATION  StandardInformation;
+	  FILE_INTERNAL_INFORMATION  InternalInformation;
+	  FILE_EA_INFORMATION        EaInformation;
+	  FILE_ACCESS_INFORMATION    AccessInformation;
+	  FILE_POSITION_INFORMATION  PositionInformation;
+	  FILE_MODE_INFORMATION      ModeInformation;
+	  FILE_ALIGNMENT_INFORMATION AlignmentInformation;
+	  FILE_NAME_INFORMATION      NameInformation;
+	} FILE_ALL_INFORMATION, *PFILE_ALL_INFORMATION;
+
+	static NtQueryInformationFile_t NtQueryInformationFile;
+	if(!NtQueryInformationFile)
+		if(!(NtQueryInformationFile=(NtQueryInformationFile_t) GetProcAddress(GetModuleHandleA("NTDLL.DLL"), "NtQueryInformationFile")))
+			abort();
+
+	IO_STATUS_BLOCK isb={ 0 };
+
+	// It's not widely known that the NT kernel supplies a stat() equivalent i.e. get me everything in a single syscall
+	std::filesystem::path::value_type buffer[sizeof(FILE_ALL_INFORMATION)/sizeof(std::filesystem::path::value_type)+32769];
+	FILE_ALL_INFORMATION &fai=*(FILE_ALL_INFORMATION *)buffer;
+	HANDLE h=CreateFile(prefix.c_str(), FILE_READ_DATA|FILE_READ_EA|FILE_READ_ATTRIBUTES, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, NULL,
+		OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+	if(INVALID_HANDLE_VALUE==h) return;
+	NTSTATUS ntval=NtQueryInformationFile(h, &isb, &fai, sizeof(buffer), FileAllInformation);
+	CloseHandle(h);
+	if(0/*STATUS_SUCCESS*/!=ntval)
+		return;
+	if(wanted.have_ino) { stat.st_ino=fai.InternalInformation.IndexNumber.QuadPart; have_metadata.have_ino=1; }
+	if(wanted.have_type) { stat.st_type=(fai.BasicInformation.FileAttributes&FILE_ATTRIBUTE_DIRECTORY) ? S_IFDIR : S_IFREG; have_metadata.have_type=1; }
+	if(wanted.have_nlink) { stat.st_nlink=(int16_t) fai.StandardInformation.NumberOfLinks; have_metadata.have_nlink=1; }
+	if(wanted.have_atim) { stat.st_atim=to_timespec(fai.BasicInformation.LastAccessTime); have_metadata.have_atim=1; }
+	if(wanted.have_mtim) { stat.st_mtim=to_timespec(fai.BasicInformation.LastWriteTime); have_metadata.have_mtim=1; }
+	if(wanted.have_ctim) { stat.st_ctim=to_timespec(fai.BasicInformation.ChangeTime); have_metadata.have_ctim=1; }
+	if(wanted.have_size) { stat.st_size=fai.StandardInformation.EndOfFile.QuadPart; have_metadata.have_size=1; }
+	if(wanted.have_allocated) { stat.st_allocated=fai.StandardInformation.AllocationSize.QuadPart; have_metadata.have_allocated=1; }
+	if(wanted.have_blocks) { stat.st_blocks=fai.StandardInformation.AllocationSize.QuadPart/fai.AlignmentInformation.AlignmentRequirement; have_metadata.have_blocks=1; }
+	if(wanted.have_blksize) { stat.st_blksize=(uint16_t) fai.AlignmentInformation.AlignmentRequirement; have_metadata.have_blksize=1; }
+	if(wanted.have_birthtim) { stat.st_birthtim=to_timespec(fai.BasicInformation.CreationTime); have_metadata.have_birthtim=1; }
 #else
 	struct stat s={0};
 	if(-1!=lstat(prefix.c_str(), &s))
@@ -412,6 +579,7 @@ std::unique_ptr<std::vector<directory_entry>> enumerate_directory(void *h, size_
 		size_t length=strchr(dent->d_name, 0)-dent->d_name;
 		if(length<=2 && '.'==dent->d_name[0])
 			if(1==length || '.'==dent->d_name[1]) continue;
+		todo globbing;
 		std::filesystem::path::string_type leafname(dent->d_name, length);
 		item.leafname=std::move(leafname);
 		item.stat.st_ino=dent->d_ino;

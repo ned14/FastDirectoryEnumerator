@@ -4,7 +4,7 @@ Enumerates very, very large directories quickly by directly using kernel syscall
 File created: Aug 2013
 */
 
-#define NUMBER_OF_FILES 1000000
+#define NUMBER_OF_FILES 100000
 
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -50,18 +50,18 @@ File created: Aug 2013
 std::ostream &operator<<(std::ostream &s, const FastDirectoryEnumerator::timespec &ts)
 {
 	char buf[32];
-    struct tm t;
+    struct tm *t;
     size_t len=sizeof(buf);
     int ret;
 
     tzset();
-    if (localtime_r(&(ts.tv_sec), &t) == NULL)
+    if ((t=localtime(&(ts.tv_sec))) == NULL)
     {
     	s << "<bad timespec>";
         return s;
     }
 
-    ret = strftime(buf, len, "%F %T", &t);
+    ret = strftime(buf, len, "%Y-%m-%d %H:%M:%S", t);
     if (ret == 0)
     {
     	s << "<bad timespec>";
@@ -69,7 +69,7 @@ std::ostream &operator<<(std::ostream &s, const FastDirectoryEnumerator::timespe
     }
     len -= ret - 1;
 
-    snprintf(&buf[strlen(buf)], len, ".%09ld", ts.tv_nsec);
+    sprintf(&buf[strlen(buf)], ".%09ld", ts.tv_nsec);
     s << buf;
 
     return s;
@@ -138,7 +138,6 @@ int main(void)
 	// Enumerate
 	std::cout << "Pulling all metadata for " << NUMBER_OF_FILES << " files. This may take a while ..." << std::endl;
     begin=chrono::high_resolution_clock::now();
-	h=begin_enumerate_directory(_L("testdir"));
 	if(enumeration)
 	{
 		have_metadata_flags maximum; maximum.value=(unsigned)-1;
