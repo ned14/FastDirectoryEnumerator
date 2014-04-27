@@ -2,6 +2,13 @@ FastDirectoryEnumerator
 -=-=-=-=-=-=-=-=-=-=-=-
 (C) 2013 Niall Douglas
 
+WARNING: Use the code at https://github.com/BoostGSoC13/boost.afio/blob/master/boost/afio/detail/impl/afio_iocp.ipp#L614
+in preference to this code. This code was used to prototype the AFIO implementation. This code has known bugs, the
+AFIO code is thought to be bug free and is regularly tested by a CI.
+
+
+
+
 Herein lies C++11 code which enumerates and stat()'s very, very large directories quickly
 by directly using kernel syscalls. For POSIX and Windows.
 
